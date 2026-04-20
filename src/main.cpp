@@ -3,10 +3,11 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <algorithm>
 
 namespace {
 constexpr char kApSsid[] = "MulticastLoRa";
-constexpr char kApPassword[] = "multicastlora";
+constexpr char kApPassword[] = "MulticastLoRa123";
 constexpr uint8_t kApChannel = 1;
 constexpr uint8_t kApMaxClients = 2;
 
@@ -20,11 +21,14 @@ constexpr int kLoraMosi = 27;
 constexpr int kLoraSs = 18;
 constexpr int kLoraRst = 14;
 constexpr int kLoraDio0 = 26;
+constexpr uint8_t kLoraInitMaxRetries = 10;
 
 constexpr size_t kMaxPayloadSize = 255;
 
 WiFiUDP udp;
-uint8_t payload[kMaxPayloadSize];
+uint8_t udpPayload[kMaxPayloadSize];
+uint8_t loraPayload[kMaxPayloadSize];
+bool loraReady = false;
 
 void printPayload(const char *source, const uint8_t *data, size_t len) {
   Serial.printf("[%s] %u bytes: ", source, static_cast<unsigned>(len));
@@ -40,6 +44,14 @@ void printPayload(const char *source, const uint8_t *data, size_t len) {
 }
 
 void forwardToLora(const uint8_t *data, size_t len) {
+  if (!loraReady) {
+    static bool warnedUnavailable = false;
+    if (!warnedUnavailable) {
+      Serial.println("LoRa unavailable: dropping UDP->LoRa payloads");
+      warnedUnavailable = true;
+    }
+    return;
+  }
   LoRa.beginPacket();
   LoRa.write(data, len);
   LoRa.endPacket();
@@ -60,7 +72,8 @@ void setupSoftAp() {
 
 void setupMulticastUdp() {
   if (!udp.beginMulticast(WiFi.softAPIP(), kMulticastIp, kMulticastPort)) {
-    Serial.println("Failed to start multicast UDP listener");
+    Serial.println(
+        "Failed to start multicast UDP listener; WiFi AP stays active but bridge is disabled");
   } else {
     Serial.printf("Listening multicast %u.%u.%u.%u:%u\n", kMulticastIp[0],
                   kMulticastIp[1], kMulticastIp[2], kMulticastIp[3],
@@ -72,14 +85,20 @@ void setupLora() {
   SPI.begin(kLoraSck, kLoraMiso, kLoraMosi, kLoraSs);
   LoRa.setPins(kLoraSs, kLoraRst, kLoraDio0);
 
-  if (!LoRa.begin(kLoraFrequencyHz)) {
-    Serial.println("LoRa init failed");
-    while (true) {
-      delay(1000);
-    }
+  uint8_t attempts = 0;
+  while (attempts < kLoraInitMaxRetries && !LoRa.begin(kLoraFrequencyHz)) {
+    ++attempts;
+    Serial.printf("LoRa init failed (attempt %u/%u), retrying...\n", attempts,
+                  kLoraInitMaxRetries);
+    delay(2000);
   }
 
-  Serial.println("LoRa init OK");
+  loraReady = attempts < kLoraInitMaxRetries;
+  if (loraReady) {
+    Serial.println("LoRa init OK");
+  } else {
+    Serial.println("LoRa unavailable after max retries; continuing without LoRa");
+  }
 }
 
 void handleUdpToLora() {
@@ -88,20 +107,26 @@ void handleUdpToLora() {
     return;
   }
 
-  const size_t bytesToRead =
-      (static_cast<size_t>(packetSize) < kMaxPayloadSize)
-          ? static_cast<size_t>(packetSize)
-          : kMaxPayloadSize;
-  const size_t len = udp.read(payload, bytesToRead);
+  const size_t maxBytesToRead =
+      std::min(static_cast<size_t>(packetSize), kMaxPayloadSize);
+  if (static_cast<size_t>(packetSize) > kMaxPayloadSize) {
+    Serial.printf("UDP packet truncated from %d to %u bytes\n", packetSize,
+                  static_cast<unsigned>(kMaxPayloadSize));
+  }
+  const size_t len = udp.read(udpPayload, maxBytesToRead);
   if (len == 0) {
     return;
   }
 
-  printPayload("UDP", payload, len);
-  forwardToLora(payload, len);
+  printPayload("UDP", udpPayload, len);
+  forwardToLora(udpPayload, len);
 }
 
 void handleLoraToUdp() {
+  if (!loraReady) {
+    return;
+  }
+
   const int packetSize = LoRa.parsePacket();
   if (packetSize <= 0) {
     return;
@@ -109,15 +134,15 @@ void handleLoraToUdp() {
 
   size_t len = 0;
   while (LoRa.available() && len < kMaxPayloadSize) {
-    payload[len++] = static_cast<uint8_t>(LoRa.read());
+    loraPayload[len++] = static_cast<uint8_t>(LoRa.read());
   }
 
   if (len == 0) {
     return;
   }
 
-  printPayload("LoRa", payload, len);
-  forwardToMulticast(payload, len);
+  printPayload("LoRa", loraPayload, len);
+  forwardToMulticast(loraPayload, len);
 }
 } // namespace
 

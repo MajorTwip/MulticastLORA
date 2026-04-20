@@ -1,4 +1,4 @@
-# MulticastLORA
+# MulticastLoRa
 
 PlatformIO Arduino firmware for ESP32 LoRa boards (`heltec_wifi_lora_32`) that bridges:
 
