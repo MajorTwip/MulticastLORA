@@ -4,10 +4,12 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <algorithm>
+#include <esp_efuse.h>
 #include "pinout.h"
 
 namespace {
-constexpr char kApSsid[] = "MulticastLoRa2";
+// Last 4 hex digits of the base MAC address are appended at runtime.
+constexpr char kApSsidPrefix[] = "MCLoRa";
 constexpr char kApPassword[] = "MulticastLoRa123";
 constexpr uint8_t kApChannel = 1;
 constexpr uint8_t kApMaxClients = 2;
@@ -15,8 +17,15 @@ constexpr uint8_t kApMaxClients = 2;
 constexpr uint16_t kMulticastPort = 22501;
 const IPAddress kMulticastIp(239, 225, 0, 1);
 
-constexpr long kLoraFrequencyHz = 868E6;
-constexpr uint8_t kLoraInitMaxRetries = 10;
+// LoRa radio configuration
+constexpr long   kLoraFrequencyHz      = 869525000L; // 869.525 MHz
+constexpr int    kLoraSpreadingFactor  = 7;          // SF7–SF12
+constexpr long   kLoraBandwidthHz      = 250000L;    // 250 kHz
+constexpr int    kLoraCodingRateDenom  = 5;          // 4/5
+constexpr bool   kLoraCrcEnabled       = true;
+constexpr uint8_t kLoraInitMaxRetries  = 10;
+
+char apSsid[16]; // "MCLoRa" + '_' + 4 hex chars + '\0'
 
 constexpr size_t kMaxPayloadSize = 255;
 
@@ -58,11 +67,19 @@ void forwardToMulticast(const uint8_t *data, size_t len) {
   udp.endPacket();
 }
 
+void buildApSsid() {
+  uint8_t mac[6];
+  esp_efuse_mac_get_default(mac);
+  snprintf(apSsid, sizeof(apSsid), "%s_%02X%02X",
+           kApSsidPrefix, mac[4], mac[5]);
+}
+
 void setupSoftAp() {
+  buildApSsid();
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(kApSsid, kApPassword, kApChannel, 0, kApMaxClients);
-  Serial.print("SoftAP started, IP: ");
-  Serial.println(WiFi.softAPIP());
+  WiFi.softAP(apSsid, kApPassword, kApChannel, 0, kApMaxClients);
+  Serial.printf("SoftAP started, SSID: %s, IP: %s\n",
+                apSsid, WiFi.softAPIP().toString().c_str());
 }
 
 void setupMulticastUdp() {
@@ -91,7 +108,14 @@ void setupLora() {
 
   loraReady = attempts < kLoraInitMaxRetries;
   if (loraReady) {
-    Serial.println("LoRa init OK");
+    LoRa.setSpreadingFactor(kLoraSpreadingFactor);
+    LoRa.setSignalBandwidth(kLoraBandwidthHz);
+    LoRa.setCodingRate4(kLoraCodingRateDenom);
+    if (kLoraCrcEnabled) LoRa.enableCrc(); else LoRa.disableCrc();
+    Serial.printf("LoRa init OK — %.3f MHz SF%d BW%.0fkHz CR4/%d CRC:%s\n",
+                  kLoraFrequencyHz / 1e6f, kLoraSpreadingFactor,
+                  kLoraBandwidthHz / 1e3f, kLoraCodingRateDenom,
+                  kLoraCrcEnabled ? "on" : "off");
   } else {
     Serial.println("LoRa unavailable after max retries; continuing without LoRa");
   }
