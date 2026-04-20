@@ -4,23 +4,18 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <algorithm>
+#include "pinout.h"
 
 namespace {
-constexpr char kApSsid[] = "MulticastLoRa";
+constexpr char kApSsid[] = "MulticastLoRa2";
 constexpr char kApPassword[] = "MulticastLoRa123";
 constexpr uint8_t kApChannel = 1;
 constexpr uint8_t kApMaxClients = 2;
 
 constexpr uint16_t kMulticastPort = 22501;
-const IPAddress kMulticastIp(239, 0, 0, 1);
+const IPAddress kMulticastIp(239, 225, 0, 1);
 
-constexpr long kLoraFrequencyHz = 915E6;
-constexpr int kLoraSck = 5;
-constexpr int kLoraMiso = 19;
-constexpr int kLoraMosi = 27;
-constexpr int kLoraSs = 18;
-constexpr int kLoraRst = 14;
-constexpr int kLoraDio0 = 26;
+constexpr long kLoraFrequencyHz = 868E6;
 constexpr uint8_t kLoraInitMaxRetries = 10;
 
 constexpr size_t kMaxPayloadSize = 255;
@@ -58,7 +53,7 @@ void forwardToLora(const uint8_t *data, size_t len) {
 }
 
 void forwardToMulticast(const uint8_t *data, size_t len) {
-  udp.beginPacketMulticast(kMulticastIp, kMulticastPort, WiFi.softAPIP());
+  udp.beginPacket(kMulticastIp, kMulticastPort);
   udp.write(data, len);
   udp.endPacket();
 }
@@ -71,7 +66,7 @@ void setupSoftAp() {
 }
 
 void setupMulticastUdp() {
-  if (!udp.beginMulticast(WiFi.softAPIP(), kMulticastIp, kMulticastPort)) {
+  if (!udp.beginMulticast(kMulticastIp, kMulticastPort)) {
     Serial.println(
         "Failed to start multicast UDP listener; WiFi AP stays active but bridge is disabled");
   } else {
@@ -82,8 +77,9 @@ void setupMulticastUdp() {
 }
 
 void setupLora() {
-  SPI.begin(kLoraSck, kLoraMiso, kLoraMosi, kLoraSs);
-  LoRa.setPins(kLoraSs, kLoraRst, kLoraDio0);
+  SPI.begin(Pinout::kLoraSck, Pinout::kLoraMiso, Pinout::kLoraMosi,
+            Pinout::kLoraSs);
+  LoRa.setPins(Pinout::kLoraSs, Pinout::kLoraRst, Pinout::kLoraDio0);
 
   uint8_t attempts = 0;
   while (attempts < kLoraInitMaxRetries && !LoRa.begin(kLoraFrequencyHz)) {
