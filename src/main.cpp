@@ -5,7 +5,7 @@
 #include <WiFiUdp.h>
 
 namespace {
-constexpr char kApSsid[] = "MulticastLORA";
+constexpr char kApSsid[] = "MulticastLoRa";
 constexpr char kApPassword[] = "multicastlora";
 constexpr uint8_t kApChannel = 1;
 constexpr uint8_t kApMaxClients = 2;
@@ -88,7 +88,11 @@ void handleUdpToLora() {
     return;
   }
 
-  const size_t len = udp.read(payload, min(static_cast<size_t>(packetSize), kMaxPayloadSize));
+  const size_t bytesToRead =
+      (static_cast<size_t>(packetSize) < kMaxPayloadSize)
+          ? static_cast<size_t>(packetSize)
+          : kMaxPayloadSize;
+  const size_t len = udp.read(payload, bytesToRead);
   if (len == 0) {
     return;
   }
@@ -112,7 +116,7 @@ void handleLoraToUdp() {
     return;
   }
 
-  printPayload("LORA", payload, len);
+  printPayload("LoRa", payload, len);
   forwardToMulticast(payload, len);
 }
 } // namespace
